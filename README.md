@@ -17,7 +17,9 @@ The experiment log, with every dataset change and training run, is in
 AITrainingDice/
 ├── CHANGES.md                 experiment log (training runs, dataset versions)
 ├── requirements.txt
-├── data/raw/set1_dice_type/   webcam photos (captures/) + CVAT labels (labels/train/)
+├── data/raw/                  one folder per photo session (raw CVAT export):
+│   ├── set1_dice_type/        webcam photos (captures/) + CVAT labels (labels/train/)
+│   └── set2_dice_type/        same layout, second session
 ├── scripts/
 │   ├── prepare_dice_type_dataset.py   raw data -> YOLO dataset with train/val split
 │   ├── analyze_dataset.py             data-quality graphs
@@ -40,6 +42,7 @@ python -m venv .venv
 
 ```bat
 :: 1. Build the YOLO dataset (train/val split) from the raw data
+::    (default: all sets of the current version; --source picks other sets)
 .venv\Scripts\python.exe scripts/prepare_dice_type_dataset.py
 
 :: 2. Look at the data

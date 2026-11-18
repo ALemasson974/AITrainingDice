@@ -3,6 +3,36 @@
 Newest entry first. Every training run and every dataset change gets an entry
 (the course grades "≥ 2 training runs with documented changes").
 
+## 2026-11-18 — Dataset v2 for the dice-type detector (model A): set 2 added
+- **Model / stage:** data
+- **Change:** Added a second photo session, `data/raw/set2_dice_type/`
+  (51 new labelled webcam photos taken on 2026-11-18, CVAT export with the same
+  class order D6, D8, D10, D12, D20). Every photo shows all 5 dice, so each
+  class gets +51 boxes (dataset v1: 45 boxes per class, v2: 96 per class).
+  `scripts/prepare_dice_type_dataset.py` now merges several raw folders
+  (`--source` takes one or more; default = set1 + set2). It stops with an
+  error if two exports have a different class order or if the same photo is
+  labelled in two sets.
+  Cleaning before the merge: the set 2 folder also contained 45 byte-identical
+  copies of set 1 photos (without labels) and the images were nested in
+  `captures/captures/`; the copies were removed and the images moved to
+  `captures/` so every set has the same layout.
+- **Why:** Run 1 had only 45 images (36 train / 9 val) and confused D8 with
+  D10; more varied examples of every die should help the model generalise.
+  Each session stays in its own folder so we can always say what each dataset
+  version contains.
+- **Settings:** 96 images: train 77 / val 19 (6 from set 1, 13 from set 2),
+  38 scenes (gap > 5 s), seed 42. Validation still holds whole scenes only
+  (no near-duplicate frames shared between train and val).
+  Dataset v1 can still be rebuilt exactly (checked: same 36/9 split, same
+  files) with `--source data/raw/set1_dice_type`.
+- **Result:** not trained yet.
+- **Note for comparing runs:** adding scenes changes the random split, so the
+  v2 validation set is not the same as run 1's. To compare fairly, also
+  validate the run 1 model on the v2 validation set.
+- **Conclusion / next step:** run 2 = same settings as run 1 (yolo11n, 50
+  epochs, imgsz 416) on dataset v2, so the only change is the data.
+
 ## 2026-11-18 — Project moved to its own repository
 - **Model / stage:** project setup
 - **Change:** The project left the course repository (`lab05/dice_project/`)

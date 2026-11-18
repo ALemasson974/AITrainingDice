@@ -2,14 +2,17 @@
 
 Why this script exists
 ----------------------
-The raw CVAT export in data/raw/set1_dice_type/ cannot be trained on
-as it is:
+Each raw CVAT export in data/raw/ (set1_dice_type/, set2_dice_type/, ...)
+cannot be trained on as it is:
   * the images live in `captures/` while the labels live in `labels/train/`,
     so YOLO cannot pair them (it finds a label by replacing "/images/" with
     "/labels/" in the image path);
   * there is only a training set, no validation set.
 
-This script copies every (image, label) pair into the standard YOLO layout
+Each new photo session is kept as its own raw folder (never merged by hand),
+so we can always say which images each dataset version contains. This script
+merges all the --source folders and copies every (image, label) pair into the
+standard YOLO layout
 
     <output>/
         data.yaml
@@ -22,13 +25,16 @@ few seconds apart look almost identical, so frames are first grouped into
 "scenes" (consecutive frames with less than --gap-seconds between them) and
 whole scenes are sent to either train or val, never split between both.
 
-The original folder is only READ, never modified.
+The original folders are only READ, never modified.
 
 How to run (from the repository root, Windows):
-    .venv\\Scripts\\python.exe scripts/prepare_dice_type_dataset.py
+    Dataset v2 (default: set1 + set2):
+        .venv\\Scripts\\python.exe scripts/prepare_dice_type_dataset.py
+    Rebuild dataset v1 exactly as used for run 1 (set1 only):
+        .venv\\Scripts\\python.exe scripts/prepare_dice_type_dataset.py --source data/raw/set1_dice_type
 
-Optional arguments: --source, --output, --val-fraction, --gap-seconds, --seed
-(run with --help to see them).
+Optional arguments: --source (one or more folders), --output, --val-fraction,
+--gap-seconds, --seed (run with --help to see them).
 """
 import argparse
 import random
@@ -103,8 +109,12 @@ def choose_validation_scenes(scenes, val_fraction, seed):
 
 def main():
     parser = argparse.ArgumentParser(description="Create a train/val YOLO dataset for dice types.")
-    parser.add_argument("--source", default="data/raw/set1_dice_type",
-                        help="Raw CVAT export: contains data.yaml, captures/ and labels/train/")
+    # nargs="+" = "one or more values": --source A B gives args.source == ["A", "B"]
+    # (a Python list, like a List<String> in Java). The default is the current
+    # dataset version (v2 = set1 + set2); add new sets here when you make them.
+    parser.add_argument("--source", nargs="+",
+                        default=["data/raw/set1_dice_type", "data/raw/set2_dice_type"],
+                        help="One or more raw CVAT exports, each with data.yaml, captures/ and labels/train/")
     parser.add_argument("--output", default="datasets/dice_type",
                         help="Folder to create (its images/ and labels/ are rebuilt each run)")
     # 20 % validation is the usual starting point: enough images to measure the
@@ -116,37 +126,70 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    source = Path(args.source)
     output = Path(args.output)
-    image_folder = source / "captures"
-    label_folder = source / "labels" / "train"
 
-    # --- 1. Read the class names from the CVAT data.yaml -------------------
-    # yaml.safe_load turns the YAML text into Python objects:
-    # here a dict like {"names": {0: "D6", 1: "D8", ...}, "path": ".", ...}
-    with open(source / "data.yaml", encoding="utf-8") as file:
-        source_config = yaml.safe_load(file)
-    class_names = source_config["names"]
+    # These two dicts collect the pairs from ALL sources, keyed by stem
+    # (file name without extension). Like a HashMap<String, Path> in Java.
+    images_by_stem = {}
+    labels_by_stem = {}
+    class_names = None
 
-    # --- 2. Pair every image with its label file -------------------------
-    # Two files belong together when they have the same stem (name without extension).
-    images_by_stem = {path.stem: path for path in image_folder.glob("*.jpg")}
-    labels_by_stem = {path.stem: path for path in label_folder.glob("*.txt")}
+    for source_text in args.source:
+        source = Path(source_text)
+        image_folder = source / "captures"
+        label_folder = source / "labels" / "train"
 
-    paired_stems = sorted(set(images_by_stem) & set(labels_by_stem))      # in both
-    images_without_label = sorted(set(images_by_stem) - set(labels_by_stem))
-    labels_without_image = sorted(set(labels_by_stem) - set(images_by_stem))
+        # --- 1. Read the class names from this source's CVAT data.yaml ------
+        # yaml.safe_load turns the YAML text into Python objects:
+        # here a dict like {"names": {0: "D6", 1: "D8", ...}, "path": ".", ...}
+        with open(source / "data.yaml", encoding="utf-8") as file:
+            source_config = yaml.safe_load(file)
 
-    print(f"{len(paired_stems)} image/label pairs found")
-    for stem in images_without_label:
-        # An image with no label file would be treated as "no dice in this
-        # picture" by YOLO, which is wrong here, so we leave it out.
-        print(f"  SKIPPED (image has no label yet): {stem}.jpg")
-    for stem in labels_without_image:
-        print(f"  SKIPPED (label has no image):     {stem}.txt")
+        # YOLO label files store a class NUMBER, not a name (1 = D8). If two
+        # exports had their labels in a different order, the same number would
+        # mean two different dice and the merged dataset would be silently
+        # wrong. So we stop with an error instead of continuing.
+        if class_names is None:
+            class_names = source_config["names"]
+        elif source_config["names"] != class_names:
+            raise SystemExit(f"ERROR: {source} has classes {source_config['names']}, "
+                             f"but the previous source(s) have {class_names}. "
+                             f"Fix the label order in CVAT and export again.")
+
+        # --- 2. Pair every image with its label file (inside this source) ---
+        # Two files belong together when they have the same stem.
+        source_images = {path.stem: path for path in image_folder.glob("*.jpg")}
+        source_labels = {path.stem: path for path in label_folder.glob("*.txt")}
+
+        paired_stems = sorted(set(source_images) & set(source_labels))      # in both
+        images_without_label = sorted(set(source_images) - set(source_labels))
+        labels_without_image = sorted(set(source_labels) - set(source_images))
+
+        print(f"{source}: {len(paired_stems)} image/label pairs found")
+        for stem in images_without_label:
+            # An image with no label file would be treated as "no dice in this
+            # picture" by YOLO, which is wrong here, so we leave it out.
+            print(f"  SKIPPED (image has no label yet): {stem}.jpg")
+        for stem in labels_without_image:
+            print(f"  SKIPPED (label has no image):     {stem}.txt")
+
+        for stem in paired_stems:
+            # The same file name in two sources would overwrite one another in
+            # the output folder, and usually means a photo was copied into two
+            # sets by mistake (the same image counted twice).
+            if stem in images_by_stem:
+                raise SystemExit(f"ERROR: {stem}.jpg is labelled in two sources: "
+                                 f"{images_by_stem[stem].parent.parent} and {source}. "
+                                 f"Keep it in only one of them.")
+            images_by_stem[stem] = source_images[stem]
+            labels_by_stem[stem] = source_labels[stem]
+
+    print(f"Total: {len(images_by_stem)} image/label pairs from {len(args.source)} source(s)")
 
     # --- 3. Group frames into scenes and choose the validation scenes -----
-    paired_images = [images_by_stem[stem] for stem in paired_stems]
+    # Scenes are built over ALL sources together; photos from different
+    # sessions are hours apart, so they always land in different scenes.
+    paired_images = list(images_by_stem.values())
     scenes = group_into_scenes(paired_images, args.gap_seconds)
     val_scene_indices = choose_validation_scenes(scenes, args.val_fraction, args.seed)
 
@@ -187,7 +230,10 @@ def main():
         yaml.safe_dump(dataset_config, file, sort_keys=False)
 
     # --- 6. Save and print a report (useful for the CHANGES.md log) -------
-    summary = (f"train: {count_per_split['train']} images | val: {count_per_split['val']} images "
+    # The source list goes in the report so we always know which raw sets a
+    # dataset was built from (needed for CHANGES.md).
+    summary = (f"sources: {', '.join(args.source)}\n"
+               f"train: {count_per_split['train']} images | val: {count_per_split['val']} images "
                f"| {len(scenes)} scenes (gap > {args.gap_seconds}s) | seed {args.seed}")
     report_lines.append(summary)
     (output / "split_report.txt").write_text("\n".join(report_lines) + "\n", encoding="utf-8")
