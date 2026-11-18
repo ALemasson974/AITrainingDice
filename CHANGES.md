@@ -3,6 +3,105 @@
 Newest entry first. Every training run and every dataset change gets an entry
 (the course grades "≥ 2 training runs with documented changes").
 
+## 2026-11-18 — Dataset v1 for the face-value classifier (model B): die crops
+- **Model / stage:** data (face-value classifier, model B)
+- **Change:** New raw set `data/raw/set1_dice_number/` (CVAT "YOLO 1.1"
+  export: `obj.names` + `labels/`, one box drawn around each visible NUMBER)
+  and new script `scripts/prepare_dice_number_dataset.py`, which turns it into
+  a classification dataset in `datasets/dice_number/`: one crop per die,
+  stored in a folder named after its face value (`train/17/…jpg`).
+  Pipeline choice = option (b): model A finds the dice, each die is cut out,
+  and model B (a classifier) only has to say which number is on that die.
+  The raw images were moved from `captures/captures/` to `captures/` (same
+  layout as the other sets).
+- **How the crops are made:** each number box is assigned to the die box that
+  contains its centre. Die boxes come from the hand-drawn dice-type labels when
+  the photo has them (43 photos), otherwise from model A's predictions (run 2,
+  conf 0.25; 54 photos) — the way the live demo will crop. Each box is
+  enlarged by 15 % on every side (`--margin 0.15`) so the whole die is in the
+  crop; the demo must use the same margin. All 375 number boxes fell inside a
+  die box; 24 dice with no number label were skipped. Checked by eye on a
+  sample of crops: one whole die per crop, number matching its folder.
+- **Why:** model B must see the same kind of image in training as in the demo:
+  one die, centred, with its number.
+- **Trap avoided:** `obj.names` lists the faces as 1…20 then 0, so class 0 in
+  the raw labels is face "1" and class 20 is face "0". The output folders use
+  the face *names*, so this offset cannot leak into training.
+- **Split (no leakage, pipeline-safe):** by scenes (photos < 5 s apart), seed
+  42, about 20 % of photos in validation. A photo that model A already uses
+  keeps model A's split, so the full pipeline can later be evaluated on photos
+  neither model was trained on. A first attempt put all 5 crops of face 16 in
+  validation (0 to learn from): each face was photographed in **one burst**,
+  i.e. one scene. Rule added: a scene only goes to validation if every face in
+  it keeps ≥ 5 training crops (`--min-train-per-face 5`).
+- **Settings / result:** 97 labelled photos (78 train / 19 val, 49 scenes),
+  53 photos without number labels skipped. 375 crops: **283 train / 92 val**,
+  21 classes (faces 0–20). Very unbalanced: face "1" has 89 training crops,
+  faces 14, 15, 17 have 5, face 18 has 4 and face 16 has 3 (their other
+  examples are on photos model A validates on). Faces 15 and 17 have no
+  validation example, so their accuracy cannot be measured.
+- **Conclusion / next step:** usable to train a first classifier, but the rare
+  faces (13–20, 0) have far too few examples. Biggest levers: label the
+  numbers on the 51 set 2 photos (die boxes already exist, ~250 crops), and
+  photograph the rare faces in several separate short sessions (different
+  scenes, so they can be in both train and val).
+
+## 2026-11-18 — Run 3: image size 640 instead of 416
+- **Model / stage:** dice-type detector (model A)
+- **Change:** Only `imgsz` changed compared with run 2: 640 instead of 416.
+  Same dataset v2 (77 train / 19 val) and same validation set, so run 2 and
+  run 3 can be compared directly.
+- **Why:** In run 2, D8 ↔ D10 is still the main confusion (5 of 38 dice). The
+  webcam photos are 640 px wide; at imgsz 416 every image is shrunk to 65 %
+  of its size, so a ~60 px die becomes ~39 px and the small differences
+  between a D8 and a D10 (number of faces, edge angles) are partly lost.
+  Hypothesis: at 640 the network sees the dice at full resolution and confuses
+  D8 and D10 less. Expected cost: about 2.4× more pixels per image
+  (640² / 416²), so slower training and a slower live demo on CPU.
+- **Settings:** yolo11n.pt (pretrained on COCO), epochs 50, **imgsz 640**,
+  batch 4, CPU, Ultralytics default augmentations. Dataset v2.
+  Command: `.venv\Scripts\python.exe scripts/train_custom_yolo.py --data datasets/dice_type/data.yaml --epochs 50 --imgsz 640 --project runs/dice_type --name run3_imgsz640`
+  Live demo with this model: pass `--imgsz 640` too (the demo default is 416).
+- **Result:** `runs/dice_type/run3_imgsz640/` — 50 epochs in 13.6 min (CPU),
+  2.7× longer than run 2 (5 min); best model = epoch 35. (A first attempt
+  crashed at epoch 8 because the dataset folder was deleted during training;
+  the dataset was rebuilt identically — same 77/19 split — and run 3 restarted
+  from scratch.) Same validation set as run 2 (19 images, 95 dice).
+
+  | On v2 val | Precision | Recall | mAP50 | mAP50-95 |
+  |---|---|---|---|---|
+  | Run 2 (imgsz 416) | 0.932 | 0.917 | **0.963** | **0.779** |
+  | Run 3 (imgsz 640) | **0.938** | **0.968** | 0.957 | 0.766 |
+
+  | Class mAP50 | D6 | D8 | D10 | D12 | D20 |
+  |---|---|---|---|---|---|
+  | Run 2 | 0.995 | 0.907 | 0.923 | 0.993 | 0.995 |
+  | Run 3 | 0.995 | 0.909 | 0.890 | 0.995 | 0.995 |
+
+  At conf 0.25 (`runs/dice_type/run3_imgsz640_val_conf025/`):
+
+  | On v2 val, conf 0.25 | Run 2 | Run 3 |
+  |---|---|---|
+  | Dice found with the right type | 89 / 95 (94 %) | **91 / 95 (96 %)** |
+  | D8 predicted as D10 | 3 of 19 | 2 of 19 |
+  | D10 predicted as D8 | 2 of 19 | 1 of 19 |
+  | Other wrong types | 1 (D12 → D20) | 1 (D8 → D6) |
+  | Dice missed | 0 | 0 |
+  | False boxes | 6 | 5 |
+
+  Loss curves: same shape as run 2 — mAP50 ~0.95 from epoch 20, flat after
+  that; training box loss keeps falling, validation box loss flat (~0.81–0.85).
+- **Conclusion / next step:** No clear gain. At conf 0.25 run 3 gets 2 more
+  dice right (D8 ↔ D10 confusions 5 → 3), but mAP50 and mAP50-95 are slightly
+  lower; with 19 validation images, one die more or less is ~1 % overall and
+  ~5 % per class, so all these differences are within noise. The hypothesis
+  "more pixels separate D8 from D10" is **not clearly confirmed**, while the
+  cost is real: 2.7× longer training and ~2.4× more work per frame in the live
+  demo. Decision: keep **run 2 (imgsz 416) as model A**, because the live demo
+  also has to run model B on every die (5 extra predictions per frame), so
+  speed matters. To really separate D8 from D10, more D8/D10 photos (and a
+  larger validation set) are a better next lever than image size.
+
 ## 2026-11-18 — Run 2: same settings, dataset v2 (more data)
 - **Model / stage:** dice-type detector (model A)
 - **Change:** Only the data changed compared with run 1: dataset v2

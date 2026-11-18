@@ -19,9 +19,11 @@ AITrainingDice/
 ├── requirements.txt
 ├── data/raw/                  one folder per photo session (raw CVAT export):
 │   ├── set1_dice_type/        webcam photos (captures/) + CVAT labels (labels/train/)
-│   └── set2_dice_type/        same layout, second session
+│   ├── set2_dice_type/        same layout, second session
+│   └── set1_dice_number/      boxes around the numbers (CVAT YOLO 1.1: obj.names, labels/)
 ├── scripts/
 │   ├── prepare_dice_type_dataset.py   raw data -> YOLO dataset with train/val split
+│   ├── prepare_dice_number_dataset.py raw data -> one crop per die, per face value (model B)
 │   ├── analyze_dataset.py             data-quality graphs
 │   ├── train_custom_yolo.py           training (course template)
 │   ├── webcam_detection.py            live demo (course template)
@@ -45,6 +47,8 @@ python -m venv .venv
 :: 1. Build the YOLO dataset (train/val split) from the raw data
 ::    (default: all sets of the current version; --source picks other sets)
 .venv\Scripts\python.exe scripts/prepare_dice_type_dataset.py
+::    Model B dataset (die crops); needs the line above AND model A run 2 (runs/)
+.venv\Scripts\python.exe scripts/prepare_dice_number_dataset.py
 
 :: 2. Look at the data
 .venv\Scripts\python.exe scripts/analyze_dataset.py
