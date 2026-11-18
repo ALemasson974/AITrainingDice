@@ -27,6 +27,7 @@ AITrainingDice/
 │   ├── webcam_detection.py            live demo (course template)
 │   └── webcam_capture.py              take new photos (course template)
 ├── analysis/                  graphs made by analyze_dataset.py
+├── docs/                      detailed explanations of the scripts (in French)
 ├── datasets/                  generated, not in git
 └── runs/                      training results + models, not in git
 ```
