@@ -5,8 +5,11 @@ webcam stream.
 
 1. **Model A — dice type:** a YOLO detector finds each die and says which type it
    is (D6, D8, D10, D12, D20).
-2. **Model B — face value:** a second model reads the number showing on each die
-   (planned).
+2. **Model B — face value:** a YOLO classifier reads the number on each die,
+   cut out of the frame using model A's box (the D10's "0" counts as 10).
+
+The live demo `scripts/dice_reader.py` shows each die's type and value and the
+total.
 
 The experiment log, with every dataset change and training run, is in
 [CHANGES.md](CHANGES.md).
@@ -24,8 +27,10 @@ AITrainingDice/
 │   ├── prepare_dice_type_dataset.py   raw data -> YOLO dataset with train/val split
 │   ├── analyze_dataset.py             data-quality graphs
 │   ├── train_custom_yolo.py           training (course template)
+│   ├── dice_reader.py                 FINAL live demo: dice type + value + total (both models)
 │   ├── webcam_detection.py            live demo (course template)
 │   └── webcam_capture.py              take new photos (course template)
+├── models/                    final models, not in git: type_best.pt (A), cls_best.pt (B)
 ├── analysis/                  graphs made by analyze_dataset.py
 ├── docs/                      script explanations (French) + model B notes (model_B_notes.md)
 ├── datasets/                  generated, not in git
@@ -52,8 +57,14 @@ python -m venv .venv
 :: 3. Train (see CHANGES.md for the settings of each run)
 .venv\Scripts\python.exe scripts/train_custom_yolo.py --data datasets/dice_type/data.yaml --epochs 50 --project runs/dice_type --name run1_baseline
 
-:: 4. Live demo with the trained model
+:: 4. Live demo with the trained model (model A only)
 .venv\Scripts\python.exe scripts/webcam_detection.py --source 0 --model runs/dice_type/run1_baseline/weights/best.pt
+
+:: 5. FINAL demo: both models, type + value of each die + total
+::    (q / ESC = quit, s = screenshot in screenshots/)
+.venv\Scripts\python.exe scripts/dice_reader.py --source 0
 ```
 
-Trained models (`runs/`) are not stored in git: share `best.pt` by USB or drive.
+Trained models (`runs/`, `models/`) are not stored in git: share the `.pt`
+files by USB or drive. `dice_reader.py` expects `models/type_best.pt` and
+`models/cls_best.pt`.

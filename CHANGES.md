@@ -3,6 +3,45 @@
 Newest entry first. Every training run and every dataset change gets an entry
 (the course grades "≥ 2 training runs with documented changes").
 
+## 2026-11-18 — Full pipeline: live dice reader (type + value + total)
+- **Model / stage:** pipeline
+- **Change:** New live demo `scripts/dice_reader.py`, built on the course
+  template `webcam_detection.py` (same options, camera loop and keys; the
+  template is unchanged). For every frame: model A (`models/type_best.pt` =
+  run 2, imgsz 416) finds the dice and their type; each die is cut out of the
+  frame using its box; model B (`models/cls_best.pt`, YOLO11n classifier
+  trained by a teammate: 21 faces "0"–"20", imgsz 128, flips off) reads the
+  number; all dice are read in one call. The window shows "D20: 17" on each
+  die and a side panel with the list of dice (left to right) and the total.
+  The D10's "0" counts as 10.
+- **Why / design decisions (measured on the 375 number-labelled dice of
+  `data/raw/set1_dice_number`, whole pipeline, model A boxes):**
+  - **Crop margin 0** (the box exactly): 96.3 % of dice read correctly,
+    against 95.2 % with a 10 % margin, 93.6 % with 15 % and 79.5 % with 25 % →
+    model B was trained on tight crops.
+  - **No forcing of the face to the die type.** Forcing model B to choose
+    only faces the die has (e.g. 1–6 for a D6) gave 2 more errors (95.7 %):
+    when the combination is impossible, it is usually model A that got the
+    type wrong (a D8 seen as a D6). Instead, an impossible combination is
+    shown in orange with "?", like a reading below 50 % confidence.
+  - A "0" always counts as 10 (only the D10 has a 0), even if model A got the
+    type wrong.
+- **Settings:** model A conf 0.25, imgsz 416; model B imgsz 128; margin 0;
+  orange below 50 % face confidence.
+- **Result:** 361 / 375 dice read correctly (96.3 %); 25 ms per frame for
+  both models on CPU (~40 frames/s possible). Checked by eye on a 5-dice photo
+  (D20 12, D6 1, D10 0 → 10, D8 2, D12 12 → total 37: all correct).
+  **Caveat:** these photos were very probably also used to train model B, so
+  96.3 % is optimistic; a fair score needs photos neither model has seen.
+  Model B is over-confident: of the 14 wrong readings only 1 was flagged in
+  orange (the other 13 had ≥ 50 % confidence and a face possible for the die),
+  so the orange colour does not catch most mistakes.
+- **Conclusion / next step:** the demo works end to end and is fast enough
+  for live use. Remaining errors are mostly on D20 faces (e.g. 11 read as 13,
+  20 as 17, 6 vs 9). To measure the real accuracy, record a short set of new
+  photos (not used for training) and compare the total shown with the real
+  total.
+
 ## 2026-11-18 — Run 3: image size 640 instead of 416
 - **Model / stage:** dice-type detector (model A)
 - **Change:** Only `imgsz` changed compared with run 2: 640 instead of 416.
