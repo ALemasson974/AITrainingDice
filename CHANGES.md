@@ -3,6 +3,34 @@
 Newest entry first. Every training run and every dataset change gets an entry
 (the course grades "≥ 2 training runs with documented changes").
 
+## 2026-11-18 — Live dice reader: one box per die (class-agnostic NMS)
+- **Model / stage:** pipeline (model A settings at prediction time)
+- **Change:** `read_dice` now calls model A with `agnostic_nms=True`.
+- **Why:** sometimes one die was listed twice. Cause: YOLO's NMS
+  (non-maximum suppression: among overlapping boxes, keep the most confident
+  one) only merges boxes **of the same class** by default. When model A
+  hesitates on a die between two types, it kept one box per type at the same
+  place, and the die was counted twice. With class-agnostic NMS, overlapping
+  boxes are merged whatever their type, and the most confident one is kept.
+- **Settings:** model A conf 0.25, imgsz 416, NMS IoU 0.7 (default),
+  `agnostic_nms=True`.
+- **Result:** measured on the 96 dice-type photos (480 hand-labelled dice):
+
+  | | Extra boxes (boxes − real dice) | Dice with 2 boxes | Real dice missed |
+  |---|---|---|---|
+  | Default NMS | +7 | 8 | 0 |
+  | `agnostic_nms=True` | **0** | 0* | **0** |
+
+  The 7 duplicate pairs were all two different types on one die (D8 + D10 ×4,
+  D20 + D10, D12 + D20, D10 + D12) overlapping 95–98 %.
+  (*1 left in my count, but it is a counting artefact: two touching dice whose
+  label boxes overlap, so one box was counted for both; the number of boxes
+  equals the number of dice.) Lowering the IoU threshold to 0.5 or adding a
+  "box inside a box" filter gave the same result, so the simplest fix was kept.
+  These photos were used to train model A, so the real rate on new photos may
+  differ, but the cause (per-class NMS) does not depend on the photo.
+- **Conclusion / next step:** confirm live that no die is listed twice.
+
 ## 2026-11-18 — Live dice reader: smoothing by majority vote over frames
 - **Model / stage:** pipeline
 - **Change:** `scripts/dice_reader.py` now follows each die from frame to

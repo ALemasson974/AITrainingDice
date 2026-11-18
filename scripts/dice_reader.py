@@ -106,7 +106,11 @@ def read_dice(frame, type_model, number_model, args):
     {"type": "D20", "face": "17", "value": 17, "type_conf": 0.91,
      "face_conf": 0.88, "consistent": True, "box": (x1, y1, x2, y2)}"""
     # Stage 1: model A finds the dice. [0] = result for our single image.
-    detection = type_model.predict(frame, conf=args.conf, imgsz=args.imgsz,
+    # agnostic_nms=True: when two boxes overlap, keep only the most confident
+    # one, WHATEVER their type. By default YOLO only merges boxes of the SAME
+    # type, so a die it hesitates on got two boxes (e.g. D8 + D10) and was
+    # counted twice: 7 extra dice on our 480 labelled dice, 0 with this option.
+    detection = type_model.predict(frame, conf=args.conf, imgsz=args.imgsz, agnostic_nms=True,
                                    device="cpu", verbose=False)[0]
     boxes = detection.boxes.xyxy.tolist()               # [[x1, y1, x2, y2], ...]
     type_indices = detection.boxes.cls.tolist()         # [4.0, 0.0, ...]

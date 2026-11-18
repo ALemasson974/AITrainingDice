@@ -141,11 +141,11 @@ return frame[top:bottom, left:right]
 
 Le coéquipier a donc entraîné le modèle B sur des crops **serrés**. Avec une grande marge, des morceaux de table et des dés voisins apparaissent dans le crop, et le modèle lit moins bien.
 
-### 4.3 `read_dice` : le cœur du pipeline ([lignes 102-140](../scripts/dice_reader.py#L102-L140))
+### 4.3 `read_dice` : le cœur du pipeline ([lignes 102-144](../scripts/dice_reader.py#L102-L144))
 
 **Étape 1 : le modèle A trouve les dés.**
 ```python
-detection = type_model.predict(frame, conf=args.conf, imgsz=args.imgsz,
+detection = type_model.predict(frame, conf=args.conf, imgsz=args.imgsz, agnostic_nms=True,
                                device="cpu", verbose=False)[0]
 boxes = detection.boxes.xyxy.tolist()               # [[x1, y1, x2, y2], ...]
 type_indices = detection.boxes.cls.tolist()         # [4.0, 0.0, ...]
@@ -153,6 +153,7 @@ type_confidences = detection.boxes.conf.tolist()    # [0.91, 0.87, ...]
 ```
 - `predict` renvoie une liste de résultats, un par image ; on n'en donne qu'une, d'où le `[0]`.
 - `conf=0.25` : les cadres dont la confiance est inférieure à 25 % sont ignorés.
+- **`agnostic_nms=True` : un seul cadre par dé.** YOLO propose d'abord beaucoup de cadres qui se chevauchent, puis il les fusionne : c'est la **NMS** (*non-maximum suppression*), qui garde le cadre le plus sûr et supprime ceux qui le recouvrent. Par défaut, il ne fusionne que les cadres **du même type**. Quand le modèle hésite sur un dé entre D8 et D10, il gardait donc **un cadre D8 et un cadre D10** au même endroit, et le dé était compté deux fois. Avec `agnostic_nms=True` (« sans tenir compte de la classe »), les cadres qui se recouvrent sont fusionnés quel que soit leur type, et seul le plus confiant reste. Mesuré sur les 480 dés annotés : **7 dés en trop** sans l'option (D8 + D10 quatre fois, D20 + D10, D12 + D20, D10 + D12, avec 95 à 98 % de recouvrement), **0 avec**, et **aucun vrai dé perdu**.
 - `.boxes.xyxy` donne les coins des cadres en pixels, `.boxes.cls` le numéro de classe (4 = D20) et `.boxes.conf` la confiance. Ce sont des **tenseurs** PyTorch ; `.tolist()` les transforme en listes Python normales.
 - S'il n'y a aucun dé, on renvoie une liste vide `[]`.
 
@@ -191,7 +192,7 @@ dice.sort(key=lambda die: die["box"][0])
 ```
 `lambda die: die["box"][0]` est une **petite fonction anonyme**, comme une lambda Java `die -> die.box[0]`. Elle renvoie le `x1` du cadre, donc on trie par position horizontale. La liste du panneau suit ainsi l'ordre des dés sur la table.
 
-### 4.4 `Track` et `DiceTracker` : le lissage ([lignes 143-223](../scripts/dice_reader.py#L143-L223))
+### 4.4 `Track` et `DiceTracker` : le lissage ([lignes 147-227](../scripts/dice_reader.py#L147-L227))
 
 **Le problème.** Chaque image est analysée indépendamment. Une lecture peut donc « clignoter » : un 17 lu 12 pendant une seule image, un dé oublié une image, un faux cadre qui apparaît une fraction de seconde. Le total à l'écran saute alors sans arrêt.
 
@@ -242,14 +243,14 @@ class Track:
 
 **Limite.** Un dé déplacé **très vite** d'un endroit à un autre est vu comme un nouveau dé. Son ancienne position reste affichée jusqu'à 5 images, donc pendant un court instant il peut apparaître deux fois. Un dé qui roule n'est pas affiché tant qu'il bouge vite, car il n'est jamais associé 3 images de suite.
 
-### 4.5 `is_unsure` : faut-il vérifier ce dé ? ([lignes 226-229](../scripts/dice_reader.py#L226-L229))
+### 4.5 `is_unsure` : faut-il vérifier ce dé ? ([lignes 230-233](../scripts/dice_reader.py#L230-L233))
 
 ```python
 return die["face_conf"] < min_face_conf or not die["consistent"]
 ```
 Un dé est affiché **en orange** si la lecture est peu sûre **ou** si la face est impossible pour ce type. Avec le lissage, « peu sûre » veut dire que moins de la moitié des dernières images sont d'accord ; sans lissage (`--smooth-frames 1`), cela veut dire que le modèle B est sous 50 % de confiance. `or` et `not` s'écrivent en toutes lettres en Python (`||` et `!` en Java).
 
-### 4.6 `draw_results` : dessiner l'interface ([lignes 232-267](../scripts/dice_reader.py#L232-L267))
+### 4.6 `draw_results` : dessiner l'interface ([lignes 236-271](../scripts/dice_reader.py#L236-L271))
 
 **Sur chaque dé** : un cadre, puis l'étiquette sur un fond de couleur pour qu'elle reste lisible.
 ```python
@@ -283,7 +284,7 @@ return np.hstack([annotated, panel])     # hstack = « horizontal stack »
 ```
 Les deux images doivent avoir la même hauteur. Le résultat fait 640 + 270 = 910 px de large.
 
-### 4.7 `main` : options et boucle caméra ([lignes 270-339](../scripts/dice_reader.py#L270-L339))
+### 4.7 `main` : options et boucle caméra ([lignes 274-343](../scripts/dice_reader.py#L274-L343))
 
 **Les options :**
 
@@ -367,3 +368,4 @@ Il faut **le code + l'environnement Python + les deux modèles** :
 5. **Pourquoi est-ce assez rapide pour du direct ?** Le modèle B travaille sur de petits crops de 128 px, et tous les dés sont lus en un seul appel : 25 ms par image au total.
 6. **Comment l'affichage est-il stabilisé ?** Chaque dé est suivi d'image en image (associé au dé le plus proche de l'image précédente), et on affiche le vote majoritaire de ses 10 dernières lectures. Une erreur d'une seule image ne s'affiche donc jamais.
 7. **Quel est le prix du lissage ?** Un léger retard : un dé relancé affiche sa nouvelle valeur après environ 5 images (~0,2 s).
+8. **Pourquoi un même dé était-il parfois compté deux fois ?** La NMS de YOLO ne fusionne par défaut que les cadres du même type. Un dé où le modèle hésite entre D8 et D10 gardait donc deux cadres. `agnostic_nms=True` fusionne les cadres qui se recouvrent quel que soit leur type : 7 dés en trop sur 480 avant, 0 après.
