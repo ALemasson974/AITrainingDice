@@ -3,6 +3,65 @@
 Newest entry first. Every training run and every dataset change gets an entry
 (the course grades "≥ 2 training runs with documented changes").
 
+## 2026-11-18 — Run 2: same settings, dataset v2 (more data)
+- **Model / stage:** dice-type detector (model A)
+- **Change:** Only the data changed compared with run 1: dataset v2
+  (77 train / 19 val images, set1 + set2) instead of dataset v1 (36 / 9).
+  Same model and settings, so any difference comes from the data.
+- **Why:** Run 1 learned from only 36 images and confused D8 with D10 (5 of 9
+  D8 predicted as D10). Hypothesis: twice as many varied examples of every
+  die help the model tell D8 and D10 apart.
+- **Settings:** yolo11n.pt (pretrained on COCO), epochs 50, imgsz 416, batch 4,
+  CPU, Ultralytics default augmentations (same as run 1). Dataset v2.
+  Command: `.venv\Scripts\python.exe scripts/train_custom_yolo.py --data datasets/dice_type/data.yaml --epochs 50 --project runs/dice_type --name run2_dataset_v2`
+- **Result:** `runs/dice_type/run2_dataset_v2/` — 50 epochs in 5 min (CPU),
+  best model = epoch 35.
+  Fair comparison: both models evaluated on the **same** dataset v2 validation
+  set (19 images, 95 dice: 19 of each type).
+
+  | | Precision | Recall | mAP50 | mAP50-95 |
+  |---|---|---|---|---|
+  | Run 1 model on v2 val | 0.754 | 0.849 | 0.837 | 0.648 |
+  | **Run 2 model on v2 val** | **0.932** | **0.917** | **0.963** | **0.779** |
+
+  | Class | Run 1 mAP50 | Run 2 mAP50 | Run 2 Precision | Run 2 Recall |
+  |---|---|---|---|---|
+  | D6  | 0.972 | 0.995 | 0.99 | 1.00 |
+  | D8  | 0.643 | **0.907** | 0.88 | 0.74 |
+  | D10 | 0.592 | **0.923** | 0.88 | 0.89 |
+  | D12 | 0.985 | 0.993 | 0.96 | 0.95 |
+  | D20 | 0.995 | 0.995 | 0.95 | 1.00 |
+
+  At conf 0.25 (live-demo threshold; confusion matrices in
+  `runs/dice_type/run1_on_v2val_conf025/` and `run2_dataset_v2_val_conf025/`):
+
+  | On v2 val, conf 0.25 | Run 1 | Run 2 |
+  |---|---|---|
+  | Dice found with the right type | 76 / 95 (80 %) | **89 / 95 (94 %)** |
+  | D8 predicted as D10 | 9 of 19 | **3 of 19** |
+  | D10 predicted as D8 | 3 of 19 | 2 of 19 |
+  | Other wrong types | 5 | 1 (a D12 seen as D20) |
+  | Dice missed | 2 | **0** |
+  | False boxes (box where there is no die) | 17 | **6** |
+
+  Comparison caveat: 4 of the 19 v2 validation images were in run 1's
+  *training* set (dataset v1 split differently), so run 1's score here is
+  slightly too optimistic. Run 2 still wins clearly, so its real advantage is,
+  if anything, a bit larger than shown.
+  Loss curves: mAP50 reaches ~0.95 at epoch 25 and then stays flat
+  (0.95–0.96); mAP50-95 peaks at epoch 35 (0.779) and drifts down to 0.739 at
+  epoch 50 while the training box loss keeps falling and the validation box
+  loss stays flat (~0.81–0.86) → the model has finished learning from this
+  data, with first signs of overfitting at the end.
+- **Conclusion / next step:** The hypothesis is confirmed: more data improved
+  every metric, and D8/D10 mAP50 went from 0.64/0.59 to 0.91/0.92. D8 ↔ D10 is
+  still the main confusion (5 of the 38 D8 + D10 dice), and half of the
+  false boxes (3 of 6) are labelled D10.
+  More epochs alone would not help (plateau since epoch 25). Run 3 candidate:
+  imgsz 640 on the same dataset v2 (one change only), to give the network more
+  pixels to distinguish D8 from D10. Note: with 19 validation images, one die
+  more or less moves recall by ~5 % per class, so small differences are noise.
+
 ## 2026-11-18 — Dataset v2 for the dice-type detector (model A): set 2 added
 - **Model / stage:** data
 - **Change:** Added a second photo session, `data/raw/set2_dice_type/`
@@ -26,7 +85,7 @@ Newest entry first. Every training run and every dataset change gets an entry
   (no near-duplicate frames shared between train and val).
   Dataset v1 can still be rebuilt exactly (checked: same 36/9 split, same
   files) with `--source data/raw/set1_dice_type`.
-- **Result:** not trained yet.
+- **Result:** trained in run 2 (see the entry above).
 - **Note for comparing runs:** adding scenes changes the random split, so the
   v2 validation set is not the same as run 1's. To compare fairly, also
   validate the run 1 model on the v2 validation set.
