@@ -32,7 +32,7 @@ AITrainingDice/
 │   └── webcam_capture.py              take new photos (course template)
 ├── models/                    final models, not in git: type_best.pt (A), cls_best.pt (B)
 ├── analysis/                  graphs made by analyze_dataset.py
-├── docs/                      script explanations (French) + model B notes (model_B_notes.md)
+├── docs/                      script explanations in French (dataset prep, dice_reader) + model B notes
 ├── datasets/                  generated, not in git
 └── runs/                      training results + models, not in git
 ```

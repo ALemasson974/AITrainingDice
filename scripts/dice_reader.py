@@ -9,6 +9,11 @@ Two-stage pipeline (option b, see docs/model_B_notes.md):
                  -> the window shows a box + "D20: 17" on every die, and a side
                     panel with the list of dice and the total.
 
+Smoothing (--smooth-frames, default 10): one frame's answer can flicker (a
+"17" read as "12" for one frame), so every die is followed from frame to frame
+and the window shows the MAJORITY VOTE of its last 10 readings, not the
+reading of the current frame alone. --smooth-frames 1 turns it off.
+
 Built on the course template scripts/webcam_detection.py: same options
 (--source, --conf, --imgsz), same camera loop, same keys (q / ESC to quit) and
 the same error handling. The template itself is left unchanged.
@@ -22,6 +27,7 @@ Keys in the window: q or ESC = quit, s = save a screenshot in screenshots/.
 from __future__ import annotations
 
 import argparse
+from collections import Counter, deque
 from datetime import datetime
 from pathlib import Path
 
@@ -49,6 +55,19 @@ FACES_BY_TYPE = {
 COLOR_SURE = (80, 200, 80)       # green: model B is confident
 COLOR_UNSURE = (0, 165, 255)     # orange: model B hesitates, check by eye
 PANEL_WIDTH = 270                # pixels added on the right for the list + total
+
+# Smoothing settings (see the DiceTracker class).
+# A new die is only shown once it has been seen in 3 frames: a false box that
+# appears in a single frame is never shown.
+MIN_SEEN_FRAMES = 3
+# A die that is not found for up to 5 frames in a row (~0.15 s) stays on
+# screen with its last result, so a detection missed for one frame does not
+# make it blink. After that, it is forgotten.
+MAX_MISSED_FRAMES = 5
+# Two detections in consecutive frames are "the same die" if their centres are
+# closer than half the die's size. A die moved faster than that (rolled) simply
+# becomes a new die.
+MAX_JUMP = 0.5
 
 
 def face_value(face_name):
@@ -121,6 +140,89 @@ def read_dice(frame, type_model, number_model, args):
     return dice
 
 
+class Track:
+    """One die followed from frame to frame, with its last readings.
+    (A small class, like a Java class with public fields.)"""
+
+    def __init__(self, history_size):
+        self.box = None          # last box (x1, y1, x2, y2)
+        self.center = None       # last centre (x, y)
+        # deque(maxlen=N) = a queue that keeps only the N most recent items:
+        # adding an 11th reading automatically drops the oldest one.
+        self.history = deque(maxlen=history_size)   # [("D20", "17"), ...]
+        self.frames_seen = 0     # in how many frames this die was found
+        self.frames_missed = 0   # how many frames in a row it was NOT found
+
+
+class DiceTracker:
+    """Smooths the readings: follows each die over the frames and returns, for
+    each die, the majority vote of its last `history_size` readings."""
+
+    def __init__(self, history_size):
+        self.history_size = history_size
+        self.tracks = []
+
+    def update(self, dice):
+        """Take this frame's dice (from read_dice) and return the stable dice,
+        in the same format, sorted from left to right. For a stable die,
+        "face_conf" is the share of recent frames that agree with the vote
+        (e.g. 0.8 = 8 of the last 10 frames)."""
+        # --- 1. Match each detection to the nearest die of the previous frames
+        tracks_not_matched = list(self.tracks)   # copy: we remove from it
+        for die in dice:
+            x1, y1, x2, y2 = die["box"]
+            center = ((x1 + x2) / 2, (y1 + y2) / 2)
+            max_distance = MAX_JUMP * max(x2 - x1, y2 - y1)
+
+            best_track = None
+            best_distance = None
+            for track in tracks_not_matched:
+                # Distance between the two centres (Pythagoras).
+                distance = ((center[0] - track.center[0]) ** 2 + (center[1] - track.center[1]) ** 2) ** 0.5
+                if distance <= max_distance and (best_distance is None or distance < best_distance):
+                    best_track = track
+                    best_distance = distance
+
+            if best_track is None:          # no die close enough: a new die
+                best_track = Track(self.history_size)
+                self.tracks.append(best_track)
+            else:                           # same die as before: one track = one die
+                tracks_not_matched.remove(best_track)
+            best_track.box = die["box"]
+            best_track.center = center
+            best_track.history.append((die["type"], die["face"]))
+            best_track.frames_seen += 1
+            best_track.frames_missed = 0
+
+        # --- 2. Dice not found in this frame: count it, forget them after a while
+        for track in tracks_not_matched:
+            track.frames_missed += 1
+        self.tracks = [track for track in self.tracks if track.frames_missed <= MAX_MISSED_FRAMES]
+
+        # --- 3. Majority vote for each die seen often enough -----------------
+        stable_dice = []
+        for track in self.tracks:
+            if track.frames_seen < MIN_SEEN_FRAMES:
+                continue
+            # Counter counts how many times each value appears, e.g.
+            # Counter(["17", "17", "12"]) -> {"17": 2, "12": 1};
+            # most_common(1) -> [("17", 2)], the winner and its number of votes.
+            type_votes = Counter(die_type for die_type, _face in track.history)
+            die_type = type_votes.most_common(1)[0][0]
+            face_votes = Counter(face for _die_type, face in track.history)
+            face, votes = face_votes.most_common(1)[0]
+            stable_dice.append({
+                "type": die_type,
+                "face": face,
+                "value": face_value(face),
+                "face_conf": votes / len(track.history),
+                "consistent": face in FACES_BY_TYPE[die_type],
+                "box": track.box,
+            })
+        stable_dice.sort(key=lambda die: die["box"][0])
+        return stable_dice
+
+
 def is_unsure(die, min_face_conf):
     """A reading needs checking by eye if model B hesitates, or if the face is
     impossible for the die type (one of the two models is wrong)."""
@@ -181,7 +283,14 @@ def main() -> int:
     # on tight crops).
     parser.add_argument('--margin', type=float, default=0.0)
     # Below this confidence, a reading is shown in orange: check it by eye.
+    # With smoothing, the "confidence" is the share of recent frames that agree
+    # with the vote (0.5 = fewer than half of them agree).
     parser.add_argument('--min-face-conf', type=float, default=0.5)
+    # Number of recent frames used for the majority vote. 10 frames is about
+    # 0.3 s at 30 frames/s: enough to hide a one-frame mistake, short enough
+    # that a newly rolled die shows its new value almost at once.
+    parser.add_argument('--smooth-frames', type=int, default=10,
+                        help='Frames used for the majority vote (1 = no smoothing)')
     args = parser.parse_args()
     if not 0 <= args.conf <= 1:
         parser.error('--conf must be between 0 and 1')
@@ -194,6 +303,8 @@ def main() -> int:
 
     type_model = YOLO(args.type_model)
     number_model = YOLO(args.cls_model)
+    # None = no smoothing: the window shows each frame's raw reading.
+    tracker = DiceTracker(args.smooth_frames) if args.smooth_frames > 1 else None
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         print('Could not open camera/video. Try --source 1 or a sample video path.')
@@ -205,6 +316,8 @@ def main() -> int:
             if not ok:
                 break
             dice = read_dice(frame, type_model, number_model, args)
+            if tracker is not None:
+                dice = tracker.update(dice)   # majority vote over the last frames
             annotated = draw_results(frame, dice, args.min_face_conf)
             try:
                 cv2.imshow('Dice reader (q to quit, s = screenshot)', annotated)

@@ -3,6 +3,31 @@
 Newest entry first. Every training run and every dataset change gets an entry
 (the course grades "≥ 2 training runs with documented changes").
 
+## 2026-11-18 — Live dice reader: smoothing by majority vote over frames
+- **Model / stage:** pipeline
+- **Change:** `scripts/dice_reader.py` now follows each die from frame to
+  frame and shows the **majority vote of its last 10 readings** (type and face
+  voted separately) instead of the current frame's reading alone.
+  Tracking: a detection is matched to the nearest die of the previous frames
+  if its centre moved less than half the die's size; otherwise it is a new
+  die. A die is shown after being seen in 3 frames and stays on screen up to
+  5 frames after it was last found. The percentage shown becomes the share of
+  recent frames that agree with the vote. `--smooth-frames 1` = old behaviour.
+- **Why:** each frame is read independently, so a single misread frame, a die
+  missed for one frame or a one-frame false box made the values and the total
+  jump. The models are not changed; only the display is stabilised.
+- **Settings:** `--smooth-frames 10` (~0.3 s at 30 frames/s),
+  MIN_SEEN_FRAMES 3, MAX_MISSED_FRAMES 5, MAX_JUMP 0.5 (half a die).
+- **Result:** checked on a scripted 15-frame sequence: two one-frame misreads
+  (17 read as 12) never reached the screen, a die missed for one frame stayed
+  displayed, a one-frame false box was never shown, and a die re-set from 17
+  to 5 switched after 5 frames (~0.2 s), in orange during the switch. Not yet
+  tested with the live webcam. Known limit: a die moved very fast from one
+  place to another can be shown twice for up to 5 frames.
+- **Conclusion / next step:** try it live and compare with
+  `--smooth-frames 1`; if the display still flickers, raise `--smooth-frames`;
+  if it reacts too slowly, lower it.
+
 ## 2026-11-18 — Full pipeline: live dice reader (type + value + total)
 - **Model / stage:** pipeline
 - **Change:** New live demo `scripts/dice_reader.py`, built on the course
