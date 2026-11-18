@@ -3,6 +3,62 @@
 Newest entry first. Every training run and every dataset change gets an entry
 (the course grades "≥ 2 training runs with documented changes").
 
+## 2026-11-18 — Run 3: image size 640 instead of 416
+- **Model / stage:** dice-type detector (model A)
+- **Change:** Only `imgsz` changed compared with run 2: 640 instead of 416.
+  Same dataset v2 (77 train / 19 val) and same validation set, so run 2 and
+  run 3 can be compared directly.
+- **Why:** In run 2, D8 ↔ D10 is still the main confusion (5 of 38 dice). The
+  webcam photos are 640 px wide; at imgsz 416 every image is shrunk to 65 %
+  of its size, so a ~60 px die becomes ~39 px and the small differences
+  between a D8 and a D10 (number of faces, edge angles) are partly lost.
+  Hypothesis: at 640 the network sees the dice at full resolution and confuses
+  D8 and D10 less. Expected cost: about 2.4× more pixels per image
+  (640² / 416²), so slower training and a slower live demo on CPU.
+- **Settings:** yolo11n.pt (pretrained on COCO), epochs 50, **imgsz 640**,
+  batch 4, CPU, Ultralytics default augmentations. Dataset v2.
+  Command: `.venv\Scripts\python.exe scripts/train_custom_yolo.py --data datasets/dice_type/data.yaml --epochs 50 --imgsz 640 --project runs/dice_type --name run3_imgsz640`
+  Live demo with this model: pass `--imgsz 640` too (the demo default is 416).
+- **Result:** `runs/dice_type/run3_imgsz640/` — 50 epochs in 13.6 min (CPU),
+  2.7× longer than run 2 (5 min); best model = epoch 35. (A first attempt
+  crashed at epoch 8 because the dataset folder was deleted during training;
+  the dataset was rebuilt identically — same 77/19 split — and run 3 restarted
+  from scratch.) Same validation set as run 2 (19 images, 95 dice).
+
+  | On v2 val | Precision | Recall | mAP50 | mAP50-95 |
+  |---|---|---|---|---|
+  | Run 2 (imgsz 416) | 0.932 | 0.917 | **0.963** | **0.779** |
+  | Run 3 (imgsz 640) | **0.938** | **0.968** | 0.957 | 0.766 |
+
+  | Class mAP50 | D6 | D8 | D10 | D12 | D20 |
+  |---|---|---|---|---|---|
+  | Run 2 | 0.995 | 0.907 | 0.923 | 0.993 | 0.995 |
+  | Run 3 | 0.995 | 0.909 | 0.890 | 0.995 | 0.995 |
+
+  At conf 0.25 (`runs/dice_type/run3_imgsz640_val_conf025/`):
+
+  | On v2 val, conf 0.25 | Run 2 | Run 3 |
+  |---|---|---|
+  | Dice found with the right type | 89 / 95 (94 %) | **91 / 95 (96 %)** |
+  | D8 predicted as D10 | 3 of 19 | 2 of 19 |
+  | D10 predicted as D8 | 2 of 19 | 1 of 19 |
+  | Other wrong types | 1 (D12 → D20) | 1 (D8 → D6) |
+  | Dice missed | 0 | 0 |
+  | False boxes | 6 | 5 |
+
+  Loss curves: same shape as run 2 — mAP50 ~0.95 from epoch 20, flat after
+  that; training box loss keeps falling, validation box loss flat (~0.81–0.85).
+- **Conclusion / next step:** No clear gain. At conf 0.25 run 3 gets 2 more
+  dice right (D8 ↔ D10 confusions 5 → 3), but mAP50 and mAP50-95 are slightly
+  lower; with 19 validation images, one die more or less is ~1 % overall and
+  ~5 % per class, so all these differences are within noise. The hypothesis
+  "more pixels separate D8 from D10" is **not clearly confirmed**, while the
+  cost is real: 2.7× longer training and ~2.4× more work per frame in the live
+  demo. Decision: keep **run 2 (imgsz 416) as model A**, because the live demo
+  also has to run model B on every die (5 extra predictions per frame), so
+  speed matters. To really separate D8 from D10, more D8/D10 photos (and a
+  larger validation set) are a better next lever than image size.
+
 ## 2026-11-18 — Run 2: same settings, dataset v2 (more data)
 - **Model / stage:** dice-type detector (model A)
 - **Change:** Only the data changed compared with run 1: dataset v2
